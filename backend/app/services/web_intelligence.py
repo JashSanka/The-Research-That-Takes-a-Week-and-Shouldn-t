@@ -121,81 +121,230 @@ async def fetch_web_intelligence(company_name: str) -> WebIntelligence | None:
 
 
 async def _parse_web_intelligence(company_name: str, content: str) -> WebIntelligence | None:
-    if not groq_client:
-        return None
+    # Try Groq first; fall back to regex parser on any error
+    if groq_client:
+        try:
+            response = await groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": EXTRACT_SYSTEM},
+                    {"role": "user", "content": f"Company: {company_name}\n\n{content}"},
+                ],
+                temperature=0.1,
+                max_tokens=2000,
+                response_format={"type": "json_object"},
+            )
+            raw = strip_json_codeblock(response.choices[0].message.content)
+            d = json.loads(raw)
 
-    try:
-        response = await groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": EXTRACT_SYSTEM},
-                {"role": "user", "content": f"Company: {company_name}\n\n{content}"},
-            ],
-            temperature=0.1,
-            max_tokens=2000,
-            response_format={"type": "json_object"},
-        )
-        raw = strip_json_codeblock(response.choices[0].message.content)
-        d = json.loads(raw)
-
-        # Build yearly financials from parsed data
-        yearly: list[YearlyFinancial] = []
-        for f in d.get("financials", []):
-            if f.get("year"):
-                yearly.append(YearlyFinancial(
+            metrics = [
+                TracxnMetric(label=m["label"], value=str(m["value"]))
+                for m in d.get("key_metrics", [])
+                if m.get("label") and m.get("value")
+            ]
+            competitors = [
+                TracxnCompetitor(name=c["name"], description=c.get("description"))
+                for c in d.get("competitors", [])
+                if c.get("name")
+            ]
+            yearly = [
+                YearlyFinancial(
                     year=str(f["year"]),
                     revenue=_safe_float(f.get("revenue")),
                     net_profit=_safe_float(f.get("net_profit")),
-                ))
+                )
+                for f in d.get("financials", [])
+                if f.get("year")
+            ]
+            company_profile = TracxnData(
+                source_url="https://web-search",
+                about=d.get("about") or f"{company_name} — startup profile",
+                founded_year=d.get("founded_year"),
+                headquarters=d.get("headquarters"),
+                stage=d.get("stage"),
+                total_funding=d.get("total_funding"),
+                key_metrics=metrics,
+                competitors=competitors,
+            )
+            return WebIntelligence(
+                company=d.get("company_display_name") or company_name,
+                industry=d.get("industry"),
+                business_model=d.get("business_model"),
+                annual_revenue=d.get("annual_revenue"),
+                employee_count=d.get("employee_count"),
+                valuation=d.get("valuation"),
+                founders=d.get("founders", []),
+                investors=d.get("investors", []),
+                products=d.get("products", []),
+                recent_news=d.get("recent_news"),
+                yearly_financials=yearly,
+                key_ratios=KeyRatios(),
+                company_profile=company_profile,
+            )
+        except Exception as e:
+            print(f"[WebIntel] Groq error (falling back to regex): {e}")
 
-        # Build key ratios
-        key_ratios = KeyRatios(
-            revenue_growth_yoy=None,
-            profit_margin=None,
-        )
+    # ── Regex fallback: works without any LLM ────────────────────────────────
+    return _regex_parse(company_name, content)
 
-        # Build TracxnData-like profile
-        metrics = [
-            TracxnMetric(label=m["label"], value=str(m["value"]))
-            for m in d.get("key_metrics", [])
-            if m.get("label") and m.get("value")
-        ]
-        competitors = [
-            TracxnCompetitor(name=c["name"], description=c.get("description"))
-            for c in d.get("competitors", [])
-            if c.get("name")
-        ]
 
-        company_profile = TracxnData(
-            source_url="https://web-search",
-            about=d.get("about") or f"{company_name} — startup profile",
-            founded_year=d.get("founded_year"),
-            headquarters=d.get("headquarters"),
-            stage=d.get("stage"),
-            total_funding=d.get("total_funding"),
-            key_metrics=metrics,
-            competitors=competitors,
-        )
+def _regex_parse(company_name: str, content: str) -> WebIntelligence:
+    """
+    Extracts structured startup data from raw web snippets using regex patterns.
+    No LLM required — works even when Groq is rate-limited.
+    """
+    import re
 
-        return WebIntelligence(
-            company=d.get("company_display_name") or company_name,
-            industry=d.get("industry"),
-            business_model=d.get("business_model"),
-            annual_revenue=d.get("annual_revenue"),
-            employee_count=d.get("employee_count"),
-            valuation=d.get("valuation"),
-            founders=d.get("founders", []),
-            investors=d.get("investors", []),
-            products=d.get("products", []),
-            recent_news=d.get("recent_news"),
-            yearly_financials=yearly,
-            key_ratios=key_ratios,
-            company_profile=company_profile,
-        )
-
-    except Exception as e:
-        print(f"[WebIntel] Parse error: {e}")
+    def find(patterns: list[str], flags=re.IGNORECASE) -> str | None:
+        for pat in patterns:
+            m = re.search(pat, content, flags)
+            if m:
+                v = m.group(1).strip().rstrip('.').strip()
+                if v and len(v) < 80:
+                    return v
         return None
+
+    def find_all(pattern: str, flags=re.IGNORECASE) -> list[str]:
+        return [m.strip() for m in re.findall(pattern, content, flags) if m.strip()]
+
+    # ── About (grab first meaningful sentence containing company name) ──
+    about_match = re.search(
+        rf'{re.escape(company_name)}[^.!?]{{15,300}}[.!?]',
+        content, re.IGNORECASE
+    )
+    about = about_match.group(0).strip() if about_match else f"{company_name} — startup profile sourced from web."
+
+    # ── Funding / valuation ──
+    funding = find([
+        r'raised\s+(?:a total of\s+)?([\$₹€£]\s*[\d.,]+\s*(?:million|billion|crore|lakh|M|B|Cr|K)?)',
+        r'total funding[:\s]+([\$₹€£]?\s*[\d.,]+\s*(?:million|billion|crore|M|B|Cr)?)',
+        r'funding of\s+([\$₹€£]?\s*[\d.,]+\s*(?:million|billion|crore|M|B|Cr)?)',
+    ])
+    valuation = find([
+        r'valu(?:ation|ed)[:\s]+(?:at\s+)?([\$₹€£]?\s*[\d.,]+\s*(?:billion|million|crore|B|M|Cr)?)',
+        r'unicorn[^.]{0,60}([\$₹€£]?\s*[\d.,]+\s*(?:billion|B))',
+        r'([\$₹€£]?\s*[\d.,]+\s*(?:billion|B))\s+valu',
+    ])
+    stage = find([
+        r'\b(Series [A-F]\+?|Pre-Seed|Seed|Angel|Series Seed|Bootstrapped|Public|Listed|IPO[\'d]?)\b',
+    ])
+    founded = find([r'founded in (\d{4})', r'incorporated in (\d{4})', r'est\.\s*(\d{4})'])
+    hq = find([
+        r'(?:headquartered|based|located)\s+in\s+([A-Z][a-zA-Z\s,]+?)(?:\.|,|\band\b)',
+        r'(?:startup|company)\s+from\s+([A-Z][a-zA-Z\s,]+?)(?:\.|,)',
+    ])
+    employees = find([
+        r'([\d,]+(?:\+|k)?)\s*employee',
+        r'team of\s+([\d,]+(?:\+|k)?)',
+        r'([\d,]+(?:k|\+)?)\s*people',
+    ])
+    revenue = find([
+        r'revenue of\s+([\$₹€£]?\s*[\d.,]+\s*(?:million|billion|crore|M|B|Cr)?)',
+        r'annual revenue[:\s]+([\$₹€£]?\s*[\d.,]+)',
+        r'ARR of\s+([\$₹€£]?\s*[\d.,]+)',
+    ])
+
+    # ── Founders ──
+    founders_raw = find_all(
+        r'(?:founded by|co-founded by|founders? include)[:\s]+([A-Z][a-zA-Z\s,&]+?)(?:\.|,\s+(?:who|and|in\s+\d{4})|\band\b\s+[a-z])',
+    )
+    founders: list[str] = []
+    for raw in founders_raw[:2]:
+        for name in re.split(r',|and', raw):
+            name = name.strip()
+            if name and len(name.split()) <= 4 and len(name) > 2:
+                founders.append(name)
+    founders = list(dict.fromkeys(founders))[:5]
+
+    # ── Investors ──
+    investor_raw = find_all(
+        r'(?:backed by|investors include|led by|invested by)\s+([A-Z][a-zA-Z\s,&]+?)(?:\.|,\s+[a-z])',
+    )
+    investors: list[str] = []
+    for raw in investor_raw[:2]:
+        for name in re.split(r',|and', raw):
+            name = name.strip()
+            if name and len(name) > 2 and len(name) < 50:
+                investors.append(name)
+    investors = list(dict.fromkeys(investors))[:6]
+
+    # ── Competitors ──
+    comp_patterns = [
+        r'competitors?\s+(?:include|are|:)\s+([A-Za-z0-9 ,&]+?)(?:\.|and [a-z]|$)',
+        r'competes?\s+with\s+([A-Za-z0-9 ,&]+?)(?:\.|and [a-z]|$)',
+        r'alternatives?\s+(?:to|include)\s+([A-Za-z0-9 ,&]+?)(?:\.|$)',
+        r'similar\s+to\s+([A-Za-z0-9 ,&]+?)(?:\.|$)',
+    ]
+    competitors: list[TracxnCompetitor] = []
+    seen_comps: set[str] = set()
+    for pat in comp_patterns:
+        for match in re.findall(pat, content, re.IGNORECASE):
+            for name in re.split(r',|and', match):
+                name = name.strip()
+                if name and len(name) < 40 and name.lower() != company_name.lower() and name not in seen_comps:
+                    seen_comps.add(name)
+                    competitors.append(TracxnCompetitor(name=name))
+        if len(competitors) >= 6:
+            break
+    competitors = competitors[:8]
+
+    # ── Key metrics ──
+    metric_patterns = [
+        (r'([\d,\.]+\s*(?:million|billion|crore|M|B|Cr)?)\s+(?:monthly\s+)?(?:active\s+)?users?', 'Monthly Active Users'),
+        (r'GMV of\s+([\$₹€£]?\s*[\d,\.]+\s*(?:crore|million|billion|Cr|M|B)?)', 'GMV'),
+        (r'([\d,\.]+)\s*(?:daily\s+)?orders\s+per\s+(?:day|month)', 'Orders/Day'),
+        (r'([\d,\.]+\s*(?:million|billion|M|B)?)\s+(?:registered\s+)?customers?', 'Customers'),
+        (r'NPS\s+(?:of\s+|score\s+)?([\d\.]+)', 'NPS Score'),
+        (r'growth\s+(?:rate\s+)?of\s+([\d\.]+%)', 'Growth Rate'),
+        (r'market\s+share\s+(?:of\s+)?([\d\.]+%)', 'Market Share'),
+    ]
+    metrics = []
+    for pat, label in metric_patterns:
+        m = re.search(pat, content, re.IGNORECASE)
+        if m:
+            metrics.append(TracxnMetric(label=label, value=m.group(1).strip()))
+
+    # ── Industry from keywords ──
+    industry_keywords = {
+        'quick commerce': 'Quick Commerce', 'food delivery': 'Food Delivery',
+        'fintech': 'Fintech', 'edtech': 'EdTech', 'healthtech': 'HealthTech',
+        'saas': 'SaaS', 'e-commerce': 'E-Commerce', 'logistics': 'Logistics',
+        'insurtech': 'InsurTech', 'd2c': 'D2C', 'agritech': 'AgriTech',
+        'proptech': 'PropTech', 'gaming': 'Gaming', 'ai': 'Artificial Intelligence',
+    }
+    industry = None
+    content_lower = content.lower()
+    for kw, label in industry_keywords.items():
+        if kw in content_lower:
+            industry = label
+            break
+
+    company_profile = TracxnData(
+        source_url="https://web-search",
+        about=about,
+        founded_year=founded,
+        headquarters=hq,
+        stage=stage,
+        total_funding=funding,
+        key_metrics=metrics,
+        competitors=competitors,
+    )
+
+    return WebIntelligence(
+        company=company_name,
+        industry=industry,
+        business_model=None,
+        annual_revenue=revenue,
+        employee_count=employees,
+        valuation=valuation,
+        founders=founders,
+        investors=investors,
+        products=[],
+        recent_news=None,
+        yearly_financials=[],
+        key_ratios=KeyRatios(),
+        company_profile=company_profile,
+    )
 
 
 def _safe_float(val) -> float | None:

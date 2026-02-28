@@ -1,7 +1,7 @@
 import React from 'react';
 import { CheckCircle2, Circle, Loader2 } from 'lucide-react';
 
-const STEPS = [
+const DEFAULT_STEPS = [
     "Query Decomposition",
     "Multi-Source Retrieval",
     "Credibility & Freshness Analysis",
@@ -9,15 +9,15 @@ const STEPS = [
     "Final Report Generation"
 ];
 
-export default function ProgressTracker({ currentStep }) {
-    // currentStep is index 0 to 5. If 5, it means completed.
+export default function ProgressTracker({ currentStep, steps }) {
+    const activeSteps = steps ?? DEFAULT_STEPS;
 
     return (
         <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 w-full max-w-xl mx-auto my-12">
             <h3 className="text-xl font-semibold text-slate-800 mb-6 text-center">Processing Intelligence</h3>
 
             <div className="flex flex-col gap-4">
-                {STEPS.map((step, index) => {
+                {activeSteps.map((step, index) => {
                     const isCompleted = currentStep > index;
                     const isCurrent = currentStep === index;
 
@@ -42,3 +42,4 @@ export default function ProgressTracker({ currentStep }) {
         </div>
     );
 }
+
