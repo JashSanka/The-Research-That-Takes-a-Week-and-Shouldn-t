@@ -5,42 +5,12 @@ import ProgressTracker from './components/ProgressTracker';
 import ReportView from './components/ReportView';
 import SourceList from './components/SourceList';
 
-const MOCK_HISTORY = [];
-
-const MOCK_REPORT = {
-    confidenceScore: 88,
-    executiveSummary: "AI regulation in India presents a dual-edged sword for fintech startups. While clearer guidelines on data privacy (DPDP Act) provide operational certainty, compliance costs will disproportionately affect early-stage companies. The push for AI sovereignty opens opportunities for localized models, but strict audits may slow deployment.",
-    insights: [
-        "Compliance costs for AI governance are projected to increase operating expenses by 15-20% for early-stage fintechs.",
-        "RBI's focus on algorithmic fairness is driving a shift from \"black-box\" LLMs to explainable AI (XAI) models in credit scoring.",
-        "B2B fintechs providing compliance-as-a-service are experiencing a surge in demand."
-    ],
-    risks: [
-        "Steep fines under the new Digital Personal Data Protection (DPDP) Act for non-compliant AI training data.",
-        "Prolonged approval cycles for new AI-driven financial products.",
-        "Potential bias in legacy financial datasets leading to algorithmic discrimination penalties."
-    ],
-    opportunities: [
-        "Development of localized, Indic-language financial LLMs compliant with data localization mandates.",
-        "Pioneering \"Explainable AI\" solutions tailored for RBI regulatory frameworks.",
-        "Partnering with traditional banks to accelerate their AI compliance transitions."
-    ],
-    contradictions: [
-        "Source A (TechCrunch) suggests regulations will stifle innovation, while Source B (GovPolicy Report) argues clear frameworks will actually boost foreign direct investment.",
-        "Estimates on compliance cost increases vary drastically wildly between 5% and 30% depending on the source."
-    ]
-};
-
-const MOCK_SOURCES = [
-    { title: "RBI Guidelines on Algorithmic Trading", domain: "rbi.org.in", credibility: 0.95, date: "Jan 2026", link: "#" },
-    { title: "The Cost of Compliance for AI Startups", domain: "economictimes.indiatimes.com", credibility: 0.88, date: "Dec 2025", link: "#" },
-    { title: "VC Trends in Indian Fintech", domain: "techcrunch.com", credibility: 0.82, date: "Feb 2026", link: "#" },
-    { title: "Opinion: Overregulation kills innovation", domain: "fintechblog.xyz", credibility: 0.45, date: "Nov 2025", link: "#" }
-];
-
 function App() {
     const [status, setStatus] = useState('idle'); // 'idle' | 'generating' | 'done'
     const [step, setStep] = useState(0);
+    const [report, setReport] = useState(null);
+    const [sources, setSources] = useState([]);
+    const [history, setHistory] = useState([]);
 
     const handleGenerate = (query, depth) => {
         setStatus('generating');
@@ -61,7 +31,7 @@ function App() {
 
     return (
         <div className="flex h-screen bg-slate-100 overflow-hidden font-sans">
-            <Sidebar history={MOCK_HISTORY} />
+            <Sidebar history={history} />
 
             <main className="flex-1 overflow-y-auto w-full relative">
                 {/* Header */}
@@ -92,8 +62,8 @@ function App() {
 
                     {status === 'done' && (
                         <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700 ease-out mt-6">
-                            <ReportView report={MOCK_REPORT} />
-                            <SourceList sources={MOCK_SOURCES} />
+                            {report && <ReportView report={report} />}
+                            {sources.length > 0 && <SourceList sources={sources} />}
 
                             <div className="flex justify-center mt-8 pb-8">
                                 <button
