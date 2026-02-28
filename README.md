@@ -85,6 +85,7 @@ Retrieved content is evaluated using credibility and freshness scoring engine to
 The refined information is passed back to the LLM for structured intelligence synthesis, generating a decision-ready report with insights, risks and confidence score. All logs, sources and reports are stored in Firebase (Cloud Firestore) for storage. The final structured response is returned in clean and user-friendly format.
 
 ### Architecture Diagram
+<img src="./img/USER.png" width="500" height="500">
 
 ---
 
