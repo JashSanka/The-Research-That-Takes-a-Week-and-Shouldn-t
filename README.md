@@ -45,7 +45,6 @@ Despite the abundance of online information, generating reliable research remain
 3. Evaluate Credibility and Freshness
 4. Structured intelligence synthesis
 5. Store and Track Research Outputs
-6. Enable Automation and Scalability
 
 ---
 
@@ -86,14 +85,12 @@ Retrieved content is evaluated using credibility and freshness scoring engine to
 The refined information is passed back to the LLM for structured intelligence synthesis, generating a decision-ready report with insights, risks and confidence score. All logs, sources and reports are stored in Firebase (Cloud Firestore) for storage. The final structured response is returned in clean and user-friendly format.
 
 ### Architecture Diagram
-(Add system architecture diagram image here)
 
 ---
 
 ## 5. Database Design
 
 ### ER Diagram
-(Add ER diagram image here)
 
 ### ER Diagram Description
 
