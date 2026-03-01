@@ -12,21 +12,93 @@ function App() {
     const [sources, setSources] = useState([]);
     const [history, setHistory] = useState([]);
 
-    const handleGenerate = (query, depth) => {
+    const handleGenerate = async (query, depth) => {
         setStatus('generating');
-        setStep(0);
+        setStep(1);
 
-        // Simulate generation process steps
-        let currentStep = 0;
+        let currentStep = 1;
         const interval = setInterval(() => {
-            currentStep++;
-            setStep(currentStep);
-
-            if (currentStep >= 5) {
-                clearInterval(interval);
-                setTimeout(() => setStatus('done'), 800);
+            if (currentStep < 4) {
+                currentStep++;
+                setStep(currentStep);
             }
-        }, 1200); // 1.2s per step for dramatic effect
+        }, 4000);
+
+        try {
+            const response = await fetch('http://127.0.0.1:8000/api/v1/research/query', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ query })
+            });
+
+            if (!response.ok) {
+                throw new Error("Server Error");
+            }
+
+            const data = await response.json();
+            const r = data.report;
+
+            clearInterval(interval);
+            setStep(5);
+
+            const allContradictions = [];
+            const allSources = [];
+            const seenUrls = new Set();
+
+            if (r.senior_analysis) {
+                r.senior_analysis.forEach(analysis => {
+                    if (analysis.contradictions) {
+                        analysis.contradictions.forEach(c => allContradictions.push(`Conflict: ${c.claim_a} vs ${c.claim_b}. Stronger: ${c.stronger_signal}`));
+                    }
+
+                    const evals = {};
+                    if (analysis.source_evaluations) {
+                        analysis.source_evaluations.forEach(e => evals[e.url] = e);
+                    }
+
+                    if (analysis.sources) {
+                        analysis.sources.forEach(s => {
+                            if (!seenUrls.has(s.url)) {
+                                seenUrls.add(s.url);
+                                const ev = evals[s.url] || {};
+                                let domain = ev.domain_type;
+                                if (!domain) {
+                                    try { domain = new URL(s.url).hostname.replace('www.', ''); } catch (e) { domain = 'web'; }
+                                }
+                                allSources.push({
+                                    title: s.title,
+                                    domain: domain,
+                                    credibility: ev.credibility_score ? (ev.credibility_score / 10) : 0.8,
+                                    date: s.published_date || "Recent",
+                                    link: s.url
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+
+            setReport({
+                confidenceScore: r.risk_assessment ? Math.round(r.risk_assessment.confidence_score * 10) : 80,
+                executiveSummary: r.strategy_report?.executive_summary || "Report generated without summary.",
+                insights: r.strategy_report?.key_findings?.map(kf => typeof kf === 'string' ? kf : kf.finding) || [],
+                risks: r.strategy_report?.risks_and_uncertainties?.map(ru => typeof ru === 'string' ? ru : ru.risk) || [],
+                opportunities: r.strategy_report?.strategic_implications || [],
+                contradictions: allContradictions.length > 0 ? allContradictions : ["No major contradictions found."]
+            });
+            setSources(allSources);
+
+            setTimeout(() => setStatus('done'), 800);
+
+        } catch (error) {
+            console.error("Fetch error:", error);
+            clearInterval(interval);
+            alert("Error generating report. Make sure your API keys are added in backend/.env!");
+            setStatus('idle');
+            setStep(0);
+        }
     };
 
     return (
