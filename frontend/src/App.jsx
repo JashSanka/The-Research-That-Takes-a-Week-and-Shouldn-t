@@ -25,7 +25,8 @@ function App() {
         }, 4000);
 
         try {
-            const response = await fetch('http://127.0.0.1:8000/api/v1/research/query', {
+            const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+            const response = await fetch(`${BACKEND_URL}/api/v1/research/query`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
